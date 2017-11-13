@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.collections.*?>
+
+<AnchorPane prefHeight = "480.0" prefWidth="490.0" fx:controller="controller.Controller"
+	xmlns="http://javafx.com/javafx/8.0.111" xmlns:fx="http://javafx.com/fxml/1">
+	<children>
+		<ListView fx:id="networkListView"  layoutX="15.0" layoutY="14.0" prefHeight="78.0" prefWidth="462.0" >
+		 	<items>
+		 		<FXCollections fx:factory="observableArrayList"/>
+		 	</items>
+		 </ListView>
+		<Button fx:id="pickButton" onAction="#networkPickAction" layoutX="395.0" layoutY="103.0" prefHeight="29.0" prefWidth="82.0" text ="choose" />
+		<TextArea fx:id="textArea" editable="false" layoutX="15.0" layoutY="144.0" prefHeight="325.0" prefWidth="462.0" />
+	</children>
+</AnchorPane>
+
